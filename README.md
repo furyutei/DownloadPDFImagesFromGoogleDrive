@@ -20,7 +20,7 @@ Google Chrome＋[Tampermonkey](https://chrome.google.com/webstore/detail/tamperm
 
 ■ 使い方
 ---
-Google Drive の PDF ファイル共有ページ（[例](https://drive.google.com/file/d/0B5klc5DDGyDOc3RhcnRlcl9maWxl/view)）を開くと、上部に [Download ZIP] ボタンが挿入される。 
+Google Drive の PDF ファイル共有ページ（[例](https://drive.google.com/open?id=1rYyvQGFRqLlLdQ5nUh1U8Ubx-DPEXMfV)）を開くと、上部に [Download ZIP] ボタンが挿入される。 
 これをクリックすると、PDF ファイルの画像イメージが ZIP ファイルとしてダウンロードされる。  
 
 
