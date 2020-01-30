@@ -2,7 +2,7 @@
 // @name            Download PDF images from GoogleDrive
 // @namespace       http://furyu.hatenablog.com/
 // @author          furyu
-// @version         0.1.0.1
+// @version         0.1.0.2
 // @include         https://drive.google.com/file/*/*/view*
 // @require         https://cdnjs.cloudflare.com/ajax/libs/jszip/3.2.2/jszip.min.js
 // @description     Download ZIP format PDF images from Google Drive
@@ -14,8 +14,10 @@
 //{ 各種設定
 const
     CONFIG = {
-        PAGE_WIDTH_LIMIT : 2480, // Pixcel (A4: 210 x 297mm ・ 300 dpi → 2480 x 3508)
-        // TODO: A4縦以外を考慮していない
+        DEFAULT_PAGE_WIDTH : 2480, // デフォルトページ幅(ピクセル) (A4: 210 x 297mm ・ 300 dpi → 2480 x 3508)
+        // TODO: A4縦以外を考慮していない→ダウンロード時にユーザー指定可能とする
+        MIN_PAGE_WIDTH : 596, // 最小ページ幅(ピクセル) (A4: 210 x 297mm ・ 72 dpi → 595 x 847)
+        // ※ w=595 で指定しても 596 で返ってくるので、最小値は 596 ピクセルか？
         DOWNLOAD_BUTTON_TEXT : 'Download ZIP',
         DOWNLOAD_PROGRESS_TEXT_BASE : 'Downloading: #CURRENT# / #TOTAL#',
         ZIP_PROGRESS_TEXT : 'Creating ZIP ...',
@@ -80,15 +82,27 @@ const
     
     zero_padding = ( number, length ) => ( '000000000000000' + number ).slice( - length ),
     
+    get_value = ( key ) => {
+        return new Promise( ( resolve, reject ) => {
+            resolve( localStorage.getItem( key ) );
+        } );
+    },
+    
+    set_value = ( key, value ) => {
+        return new Promise( ( resolve, reject ) => {
+            resolve( localStorage.setItem( key, value ) );
+        } );
+    },
+    
+    document_image_info = {},
+    
     download_zip = async ( download_button ) => {
-        const
-            image_info = await ( async () => {
+        if ( ! document_image_info.is_ready ) {
+            await ( async () => {
                 const
-                    image_info = {},
-                    
                     params_url = viewerData.itemJson[ 9 ], // TODO: 本当はこれに sp=... が続くが取得方法不明
                     
-                    params = image_info.params = await fetch( params_url )
+                    params = document_image_info.params = await fetch( params_url )
                         .then( response => response.text() )
                         .then( text => {
                             const
@@ -98,11 +112,17 @@ const
                         } )
                         .catch( error => {
                             console.error( 'fetch failure', params_url, error );
-                        } ),
-                    
+                            return null;
+                        } );
+                
+                if ( params === null ) {
+                    return;
+                }
+                
+                const
                     meta_info_url = 'https://drive.google.com/viewerng/' + params.meta,
                     
-                    meta_info = image_info.meta_info = await fetch( meta_info_url )
+                    meta_info = document_image_info.meta_info = await fetch( meta_info_url )
                         .then( response => response.text() )
                         .then( text => {
                             const
@@ -112,34 +132,93 @@ const
                         } )
                         .catch( error => {
                             console.error( 'fetch failure', meta_info_url, error );
-                        } ),
-                    
-                    page_width = image_info.page_width = CONFIG.PAGE_WIDTH_LIMIT ? Math.min( meta_info.maxPageWidth, CONFIG.PAGE_WIDTH_LIMIT ) : meta_info.maxPageWidth,
-                    
-                    image_url_base = image_info.image_url_base = 'https://drive.google.com/viewerng/' + params.img + '&page=#PAGE#&skiphighlight=true&w=' + page_width + '&webp=false';
+                            return null;
+                        } );
                 
-                return image_info;
-            } )(),
+                if ( meta_info === null ) {
+                    return;
+                }
+                
+                document_image_info.is_ready = true;
+            } )();
+        }
+        
+        if ( ! document_image_info.is_ready ) {
+            alert( 'Document image information could not be obtained.' );
+            return;
+        }
+        
+        const
+            page_width = document_image_info.page_width = await ( async () => {
+                let max_page_width = document_image_info.meta_info.maxPageWidth,
+                    
+                    page_width = await ( async () => {
+                        let page_width = await get_value( SCRIPT_NAME + '-page_width' );
+                        
+                        if ( ( page_width === null ) || isNaN( page_width ) ) {
+                            page_width = CONFIG.DEFAULT_PAGE_WIDTH;
+                        }
+                        else {
+                            page_width = parseInt( page_width, 10 );
+                        }
+                        
+                        return Math.min( max_page_width, page_width );
+                    } )(),
+                    
+                    specified_page_width = prompt( 'Specify page width in pixels (' + CONFIG.MIN_PAGE_WIDTH + '~' + max_page_width + 'pixels)\ne.g. A4: 210x297mm -> 300dpi: 2480x3508', page_width );
+                
+                if ( specified_page_width === null ) {
+                    return null;
+                }
+                
+                specified_page_width = specified_page_width.trim().replace( /[\uff10-\uff19]/g, char => String.fromCharCode( char.charCodeAt( 0 ) - 0xfee0 ) );
+                
+                if ( isNaN( specified_page_width ) ) {
+                    page_width = Math.min( max_page_width, CONFIG.DEFAULT_PAGE_WIDTH );
+                }
+                else {
+                    specified_page_width = parseInt( specified_page_width, 10 );
+                    
+                    if ( ( CONFIG.MIN_PAGE_WIDTH <= specified_page_width ) && ( specified_page_width <= max_page_width ) ) {
+                        page_width = specified_page_width;
+                    }
+                    else {
+                        page_width = Math.min( max_page_width, CONFIG.DEFAULT_PAGE_WIDTH );
+                    }
+                }
+                return page_width;
+            } )();
+        
+        if ( page_width === null ) {
+            return;
+        }
+        
+        await set_value( SCRIPT_NAME + '-page_width', page_width );
+        
+        const
+            image_url_base = 'https://drive.google.com/viewerng/' + document_image_info.params.img + '&page=#PAGE#&skiphighlight=true&w=' + page_width + '&webp=false',
             
             pdf_filename = viewerData.itemJson[ 1 ],
             
             zip_filename = pdf_filename.replace( /\.pdf$/, '' ) + '.zip',
             
-            max_page_length = ( '' + image_info.meta_info.pages ).length;
+            max_page_length = ( '' + document_image_info.meta_info.pages ).length,
+            
+            JSZip = window.JSZip;
         
         let zip = new JSZip(),
             
-            image_file_infos = Array( image_info.meta_info.pages ).fill().map( ( _, page ) => {
+            image_file_infos = Array( document_image_info.meta_info.pages ).fill().map( ( _, page ) => {
                 return {
                     page : page,
-                    url : image_info.image_url_base.replace( /#PAGE#/, page ),
+                    url : image_url_base.replace( /#PAGE#/, page ),
                     filename : zero_padding( 1 + page, max_page_length ) + '.png',
                 };
             } ),
             
             blob = await ( async () => {
                 if ( download_button ) {
-                    download_button.textContent = CONFIG.DOWNLOAD_PROGRESS_TEXT_BASE.replace( /#CURRENT#/g, 0 ).replace( /#TOTAL#/g, image_info.meta_info.pages );
+                    download_button.textContent = CONFIG.DOWNLOAD_PROGRESS_TEXT_BASE.replace( /#CURRENT#/g, 0 ).replace( /#TOTAL#/g, document_image_info.meta_info.pages );
                 }
                 
                 //zip.file( pdf_filename + '.url', '[InternetShortcut]\nURL=' + location.href + '\n' ); // TODO: 日本語ファイル名だとアーカイバによっては文字化けする
@@ -149,10 +228,10 @@ const
                 // TODO: 逐次落としているので遅い（並列ダウンロードすると400が返ることがあるなど面倒なので未対応）
                 for ( let image_file_info of image_file_infos ) {
                     if ( download_button ) {
-                        download_button.textContent = CONFIG.DOWNLOAD_PROGRESS_TEXT_BASE.replace( /#CURRENT#/g, 1 + image_file_info.page ).replace( /#TOTAL#/g, image_info.meta_info.pages );
+                        download_button.textContent = CONFIG.DOWNLOAD_PROGRESS_TEXT_BASE.replace( /#CURRENT#/g, 1 + image_file_info.page ).replace( /#TOTAL#/g, document_image_info.meta_info.pages );
                     }
                     else {
-                        console.log( 'Page ' + ( 1 + image_file_info.page ) + ' / ' + image_info.meta_info.pages, image_file_info.url );
+                        console.log( 'Page ' + ( 1 + image_file_info.page ) + ' / ' + document_image_info.meta_info.pages, image_file_info.url );
                     }
                     await fetch( image_file_info.url )
                         .then( response => response.arrayBuffer() )
